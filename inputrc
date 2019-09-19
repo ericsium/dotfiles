@@ -1,0 +1,6 @@
+# show-all-if-ambiguous - This alters the default behavior of the
+# completion functions. If set to `on', words which have more than one
+# possible completion cause the matches to be listed immediately
+# instead of ringing the bell. The default value is `off'.
+set show-all-if-ambiguous on
+

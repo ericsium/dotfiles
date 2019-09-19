@@ -1,3 +1,24 @@
 [submodule "dotbot"]
 	path = dotbot
 	url = https://github.com/anishathalye/dotbot
+[submodule "emacs.d/vendor/use-package"]
+	path = emacs.d/vendor/use-package
+	url = https://github.com/jwiegley/use-package
+[submodule "emacs.d/vendor/editorconfig-emacs"]
+	path = emacs.d/vendor/editorconfig-emacs
+	url = https://github.com/editorconfig/editorconfig-emacs
+[submodule "emacs.d/vendor/auto-compile"]
+	path = emacs.d/vendor/auto-compile
+	url = https://github.com/tarsius/auto-compile
+[submodule "emacs.d/vendor/packed"]
+	path = emacs.d/vendor/packed
+	url = https://github.com/tarsius/packed
+[submodule "emacs.d/vendor/dash.el"]
+	path = emacs.d/vendor/dash.el
+	url = https://github.com/magnars/dash.el
+[submodule "emacs.d/vendor/xterm-color"]
+	path = emacs.d/vendor/xterm-color
+	url = https://github.com/atomontage/xterm-color
+[submodule "emacs.d/vendor/dirswitch"]
+	path = emacs.d/vendor/dirswitch
+	url = https://github.com/mickeynp/dirswitch.el
