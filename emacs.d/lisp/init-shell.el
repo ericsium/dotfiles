@@ -76,21 +76,16 @@
                 (setq font-lock-function (lambda (_) nil))
                 (add-hook 'comint-preoutput-filter-functions 'xterm-color-filter nil t))))
 
-  (use-package dirswitch
-    :load-path "vendor/dirswitch"
-    )
-
   (defun enable-dirswitch ()
     (dirtrack-mode 1)
-    ;;    (setq dirtrack-list '("^[^:\\n]+@[^:\\n]+:\\(.+\\)[$#]" 1))
-    ;; Use re-builder to test this out
-    (setq dirtrack-list '("\\[.*\n\\(.*\\)\n[[:alpha:]]+@[^\]]+]\\$" 1))
-    (shell-dirtrack-mode -1)
-    (dirswitch-mode 1))
+    ;; Use re-builder to test this out, matches multiline prompt:
+    ;; [Sun Sep 22 04:28 PM
+    ;;  ~/projects/python/scrapy-tutorial
+    (setq dirtrack-list '("^\\[.*?:[[:digit:]]+ [AP]M\n\\(.*\\)" 1 t))
+    (shell-dirtrack-mode -1))
   
   (add-hook 'shell-mode-hook 'enable-dirswitch)
   )
-
 
 (provide 'init-shell)
 
