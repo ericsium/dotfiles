@@ -6,6 +6,16 @@
 ;; Misc personal settings
 (require 'init-settings)
 
+(use-package elpy
+  :ensure t
+  :init
+  (elpy-enable))
+
+(use-package company-quickhelp
+  :ensure t
+  :init
+  (company-quickhelp-mode))
+
 (require 'init-theme)
 
 ;; nice shell-mode setup

@@ -7,7 +7,7 @@
  '(custom-enabled-themes (quote (wombat)))
  '(font-use-systlem-font t)
  '(inhibit-startup-screen t)
- '(package-selected-packages (quote (xterm-color use-package)))
+ '(package-selected-packages (quote (company-quickhelp xterm-color use-package)))
  '(size-indication-mode t))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.

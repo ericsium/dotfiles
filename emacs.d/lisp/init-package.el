@@ -2,7 +2,7 @@
 (require 'package)
 (setq package-enable-at-startup nil) ; dont do it immediately
 (setq package-archives '(
-			                   ("melpa"     . "https://melpa.org/packages/")))
+                         ("melpa-stable" . "https://stable.melpa.org/packages/")))
 (package-initialize)
 
 ;; Bootstap use-package
