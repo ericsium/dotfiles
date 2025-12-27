@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# -----------------------------------------------------------------------------
+# Dotfiles bootstrap:
+# - Installs uv (if missing)
+# - Installs Python 3.9 via uv
+# - Runs ./install under that Python (avoids system Python incompat issues)
+# -----------------------------------------------------------------------------
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+say() { printf "\n\033[1m%s\033[0m\n" "$*"; }
+die() { printf "\n\033[31mERROR:\033[0m %s\n" "$*" >&2; exit 1; }
+
+# ---- 0) Basic sanity ---------------------------------------------------------
+if [[ ! -f "$ROOT_DIR/install" ]]; then
+  die "Expected $ROOT_DIR/install to exist. Run this from your dotfiles repo root."
+fi
+
+# ---- 1) Ensure git submodules (dotbot, etc.) --------------------------------
+if command -v git >/dev/null 2>&1 && [[ -f "$ROOT_DIR/.gitmodules" ]]; then
+  say "Initializing/updating git submodules..."
+  git submodule update --init --recursive
+fi
+
+# ---- 2) Install uv if missing ------------------------------------------------
+if ! command -v uv >/dev/null 2>&1; then
+  say "uv not found; installing uv (user-local)..."
+
+  # Official installer puts uv under ~/.local/bin (Linux) by default
+  # https://astral.sh/uv
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+
+  # Ensure current shell can see it
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+
+command -v uv >/dev/null 2>&1 || die "uv still not on PATH after install. Is ~/.local/bin on your PATH?"
+
+say "uv version: $(uv --version)"
+
+# ---- 3) Install Python via uv ------------------------------------------------
+# Choose a default "dotfiles python" that is compatible with older dotbot/PyYAML stacks.
+DOTFILES_PYTHON_VERSION="${DOTFILES_PYTHON_VERSION:-3.9}"
+
+say "Ensuring Python ${DOTFILES_PYTHON_VERSION} is installed via uv..."
+uv python install "${DOTFILES_PYTHON_VERSION}"
+
+# Optional: show what uv thinks is available
+say "Installed uv Pythons:"
+uv python list || true
+
+# ---- 4) Run ./install under that Python -------------------------------------
+# We run the install script using uv's Python selector.
+# This avoids whatever "python" the system or WSL currently provides.
+say "Running ./install under Python ${DOTFILES_PYTHON_VERSION} via uv..."
+# Use bash explicitly so we don't care about file mode/line endings/shebang edge cases.
+uv run --python "${DOTFILES_PYTHON_VERSION}" bash "$ROOT_DIR/install"
+
+say "Done."
+

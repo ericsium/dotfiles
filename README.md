@@ -15,6 +15,12 @@ To keep submodules at their proper versions, you could include something like
 To upgrade your submodules to their latest versions, you could periodically run
 `git submodule update --init --remote`.
 
+Install
+-----------
+
+Checkput: git clone https://github.com/ericsium/dotfiles.git ./dotfiles 
+Run: ./dotfiles/setup
+
 Inspiration
 -----------
 
