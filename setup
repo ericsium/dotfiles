@@ -2,62 +2,118 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# Dotfiles bootstrap:
-# - Installs uv (if missing)
-# - Installs Python 3.9 via uv
-# - Runs ./install under that Python (avoids system Python incompat issues)
+# Dotfiles bootstrap (Windows 11 + WSLg)
+#
+# - Installs GUI deps for WSLg (X11, libICE, dbus)
+# - Installs Emacs GUI
+# - Installs uv + Python 3.9 for dotbot
+# - Installs Git Credential Manager (Linux) for HTTPS auth
+# - Runs ./install under uv-managed Python
 # -----------------------------------------------------------------------------
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-say() { printf "\n\033[1m%s\033[0m\n" "$*"; }
-die() { printf "\n\033[31mERROR:\033[0m %s\n" "$*" >&2; exit 1; }
+say()  { printf "\n\033[1m%s\033[0m\n" "$*"; }
+warn() { printf "\n\033[33mWARN:\033[0m %s\n" "$*" >&2; }
+die()  { printf "\n\033[31mERROR:\033[0m %s\n" "$*" >&2; exit 1; }
 
-# ---- 0) Basic sanity ---------------------------------------------------------
-if [[ ! -f "$ROOT_DIR/install" ]]; then
-  die "Expected $ROOT_DIR/install to exist. Run this from your dotfiles repo root."
-fi
+have() { command -v "$1" >/dev/null 2>&1; }
 
-# ---- 1) Ensure git submodules (dotbot, etc.) --------------------------------
-if command -v git >/dev/null 2>&1 && [[ -f "$ROOT_DIR/.gitmodules" ]]; then
+DOTFILES_PYTHON_VERSION="${DOTFILES_PYTHON_VERSION:-3.9.19}"
+USE_GCM="${USE_GCM:-auto}"   # auto | yes | no
+
+# ---- 0) Sanity ---------------------------------------------------------------
+[[ -f "$ROOT_DIR/install" ]] || die "Expected $ROOT_DIR/install to exist."
+
+# ---- 1) Git submodules --------------------------------------------------------
+if have git && [[ -f "$ROOT_DIR/.gitmodules" ]]; then
   say "Initializing/updating git submodules..."
   git submodule update --init --recursive
 fi
 
-# ---- 2) Install uv if missing ------------------------------------------------
-if ! command -v uv >/dev/null 2>&1; then
-  say "uv not found; installing uv (user-local)..."
-
-  # Official installer puts uv under ~/.local/bin (Linux) by default
-  # https://astral.sh/uv
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-
-  # Ensure current shell can see it
-  export PATH="$HOME/.local/bin:$PATH"
+# ---- 2) WSLg GUI dependencies -------------------------------------------------
+if [[ -d /mnt/wslg ]]; then
+  if have sudo; then
+    if ! dpkg -s libice6 >/dev/null 2>&1; then
+      say "Installing WSLg GUI dependencies (X11, libICE, dbus)..."
+      sudo apt update
+      sudo apt install -y \
+        libice6 libsm6 libx11-6 libxext6 libxrender1 \
+        libxtst6 libxi6 libxrandr2 \
+        libglib2.0-0 libc6 libgcc-s1 libstdc++6 \
+        dbus-x11 x11-apps
+    else
+      say "GUI dependencies already present."
+    fi
+  else
+    warn "WSLg detected but sudo not available; skipping GUI dependency install."
+  fi
+else
+  warn "WSLg not detected; skipping GUI dependency install."
 fi
 
-command -v uv >/dev/null 2>&1 || die "uv still not on PATH after install. Is ~/.local/bin on your PATH?"
+# ---- 3) Emacs GUI -------------------------------------------------------------
+if have sudo; then
+  if ! dpkg -s emacs >/dev/null 2>&1 && ! dpkg -s emacs-gtk >/dev/null 2>&1; then
+    say "Installing Emacs (GUI build)..."
+    sudo apt install -y emacs
+  else
+    say "Emacs already installed."
+  fi
+else
+  warn "sudo not available; skipping Emacs install."
+fi
 
+# ---- 4) uv --------------------------------------------------------------------
+if ! have uv; then
+  say "Installing uv (user-local)..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+have uv || die "uv not found after install. Ensure ~/.local/bin is on PATH."
 say "uv version: $(uv --version)"
 
-# ---- 3) Install Python via uv ------------------------------------------------
-# Choose a default "dotfiles python" that is compatible with older dotbot/PyYAML stacks.
-DOTFILES_PYTHON_VERSION="${DOTFILES_PYTHON_VERSION:-3.9}"
+# ---- 5) Python for dotfiles ---------------------------------------------------
+say "Ensuring Python ${DOTFILES_PYTHON_VERSION} via uv..."
+uv python install "${DOTFILES_PYTHON_VERSION}" >/dev/null
 
-say "Ensuring Python ${DOTFILES_PYTHON_VERSION} is installed via uv..."
-uv python install "${DOTFILES_PYTHON_VERSION}"
+# ---- 6) Git Credential Manager (Linux) ----------------------------------------
+ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
+is_https=false
+[[ "$ORIGIN_URL" == https://github.com/* ]] && is_https=true
 
-# Optional: show what uv thinks is available
-say "Installed uv Pythons:"
-uv python list || true
+install_gcm() {
+  say "Installing Git Credential Manager (Linux)..."
+  curl -LsSf https://aka.ms/gcm/linux-install-source.sh | bash
+}
 
-# ---- 4) Run ./install under that Python -------------------------------------
-# We run the install script using uv's Python selector.
-# This avoids whatever "python" the system or WSL currently provides.
+configure_gcm() {
+  say "Configuring Git Credential Manager (cache store)..."
+  git config --global credential.helper manager
+  git config --global credential.credentialStore cache
+  git config --global credential.interactive always
+  git config --global credential.cacheOptions "--timeout=28800"
+}
+
+if [[ "$USE_GCM" == "yes" ]] || { [[ "$USE_GCM" == "auto" ]] && $is_https; }; then
+  if ! have git-credential-manager; then
+    install_gcm
+    hash -r || true
+  fi
+
+  if have git-credential-manager; then
+    configure_gcm
+  else
+    warn "GCM not found after install; HTTPS auth may prompt every time."
+  fi
+else
+  say "Skipping GCM setup."
+fi
+
+# ---- 7) Run dotfiles install --------------------------------------------------
 say "Running ./install under Python ${DOTFILES_PYTHON_VERSION} via uv..."
-# Use bash explicitly so we don't care about file mode/line endings/shebang edge cases.
 uv run --python "${DOTFILES_PYTHON_VERSION}" bash "$ROOT_DIR/install"
 
-say "Done."
+say "Setup complete."
 

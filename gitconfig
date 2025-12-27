@@ -61,6 +61,7 @@
 	mnemonicPrefix = true
 	wordRegex = "[^[:space:]]|([[:alnum:]]|UTF_8_GUARD)+"
 	compactionHeuristic = true
+	tool = meld
 
 [color]
 	ui = auto
@@ -90,10 +91,6 @@
 
 [push]
 	default = upstream
-
-[credential]
-	helper = cache --timeout=3600
-
 [grep]
 	lineNumber = true
 
@@ -116,3 +113,10 @@
 # Allow local customizations in the .gitconfig_local file
 [include]
 	path = ~/.gitconfig_local
+[credential]
+	helper = manager
+	credentialStore = cache
+	interactive = always
+	cacheOptions = --timeout=28800
+[difftool]
+	prompt = false

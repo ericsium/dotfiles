@@ -17,6 +17,9 @@ To upgrade your submodules to their latest versions, you could periodically run
 
 Install
 -----------
+Install git on windows and install credential manager
+
+git config --global credential.helper manager-core
 
 Checkput: git clone https://github.com/ericsium/dotfiles.git ./dotfiles 
 Run: ./dotfiles/setup

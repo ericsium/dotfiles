@@ -4,10 +4,10 @@
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  '(column-number-mode t)
- '(custom-enabled-themes (quote (wombat)))
+ '(custom-enabled-themes '(wombat))
  '(font-use-systlem-font t)
  '(inhibit-startup-screen t)
- '(package-selected-packages (quote (company-quickhelp xterm-color use-package)))
+ '(package-selected-packages '(company-quickhelp xterm-color use-package))
  '(size-indication-mode t))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
