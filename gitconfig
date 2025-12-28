@@ -115,10 +115,11 @@
 [include]
 	path = ~/.gitconfig_local
 [credential]
-	helper = manager
+	helper = /mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe
 	credentialStore = cache
 	interactive = always
 	cacheOptions = --timeout=28800
+	useHttpPath = true
 [difftool]
 	prompt = false
 [difftool "meld"]

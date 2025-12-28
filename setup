@@ -5,7 +5,7 @@ set -euo pipefail
 # Phased setup for WSL Debian/Ubuntu:
 #   --dotfiles : uv + Python + protect ~/.bashrc + run ./install
 #   --extras   : WSLg GUI deps + Emacs GUI
-#   --gcm      : Git Credential Manager (Linux only)
+#   --gcm      : Git Credential Manager via Windows host (shared creds, persistent)
 #   --meld     : Meld + configure git difftool/mergetool
 #   --codex    : Codex CLI (npm i -g @openai/codex)
 #   --all      : everything
@@ -23,7 +23,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 DOTFILES_PYTHON_VERSION="${DOTFILES_PYTHON_VERSION:-3.9.19}"
 USE_GCM="${USE_GCM:-auto}"          # auto | yes | no
-GCM_STORE="${GCM_STORE:-cache}"     # cache | secretservice
+GCM_STORE="${GCM_STORE:-cache}"     # (deprecated; Windows GCM ignores this, kept for backwards compat)
 
 DO_DOTFILES=false
 DO_EXTRAS=false
@@ -42,7 +42,7 @@ Defaults:
 Env:
   DOTFILES_PYTHON_VERSION=3.9.19
   USE_GCM=auto|yes|no
-  GCM_STORE=cache|secretservice
+  GCM_STORE=cache|secretservice   (deprecated; only used by old Linux-GCM flow)
 EOF
 }
 
@@ -143,29 +143,94 @@ install_emacs_gui() {
   fi
 }
 
-# ---- 7) Git Credential Manager (Linux only) ----------------------------------
-install_gcm_linux() {
-  say "Installing Git Credential Manager (Linux)..."
-  curl -LsSf https://aka.ms/gcm/linux-install-source.sh | bash
+# ---- 7) Git Credential Manager via Windows host ------------------------------
+# This configures WSL git to call the Windows GCM executable from Git for Windows,
+# so auth persists in Windows Credential Manager and is shared across WSL distros.
+
+find_windows_gcm() {
+  # Print the best candidate path on stdout; return non-zero if not found.
+
+  # Common Git for Windows locations (varies by version)
+  local candidates=(
+    "/mnt/c/Program Files/Git/mingw64/bin/git-credential-manager.exe"
+    "/mnt/c/Program Files/Git/mingw64/bin/git-credential-manager-core.exe"
+    "/mnt/c/Program Files/Git/mingw64/libexec/git-core/git-credential-manager.exe"
+    "/mnt/c/Program Files/Git/mingw64/libexec/git-core/git-credential-manager-core.exe"
+
+    "/mnt/c/Program Files (x86)/Git/mingw64/bin/git-credential-manager.exe"
+    "/mnt/c/Program Files (x86)/Git/mingw64/bin/git-credential-manager-core.exe"
+    "/mnt/c/Program Files (x86)/Git/mingw64/libexec/git-core/git-credential-manager.exe"
+    "/mnt/c/Program Files (x86)/Git/mingw64/libexec/git-core/git-credential-manager-core.exe"
+
+    # Standalone installs sometimes use these names
+    "/mnt/c/Program Files/Git/mingw64/bin/gcm-core.exe"
+    "/mnt/c/Program Files (x86)/Git/mingw64/bin/gcm-core.exe"
+  )
+
+  local p
+  for p in "${candidates[@]}"; do
+    if [[ -x "$p" ]]; then
+      printf "%s\n" "$p"
+      return 0
+    fi
+  done
+
+  # Fallback: ask Windows where it is (works if Git for Windows is on PATH)
+  if have cmd.exe && have wslpath; then
+    local winpath=""
+    winpath="$(cmd.exe /c "where git-credential-manager.exe 2>nul" | tr -d '\r' | head -n 1 || true)"
+    if [[ -n "$winpath" ]]; then
+      local wslp
+      wslp="$(wslpath "$winpath" 2>/dev/null || true)"
+      if [[ -n "$wslp" && -x "$wslp" ]]; then
+        printf "%s\n" "$wslp"
+        return 0
+      fi
+    fi
+
+    winpath="$(cmd.exe /c "where git-credential-manager-core.exe 2>nul" | tr -d '\r' | head -n 1 || true)"
+    if [[ -n "$winpath" ]]; then
+      local wslp2
+      wslp2="$(wslpath "$winpath" 2>/dev/null || true)"
+      if [[ -n "$wslp2" && -x "$wslp2" ]]; then
+        printf "%s\n" "$wslp2"
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
 }
 
-configure_gcm_linux() {
-  say "Configuring Git Credential Manager..."
-  git config --global credential.helper manager
+configure_gcm_windows() {
+  local gcm_path="$1"
+
+  # IMPORTANT: credential.helper is executed as a command line; spaces must be escaped.
+  # printf %q produces a shell-escaped string like /mnt/c/Program\ Files/...
+  local gcm_helper
+  gcm_helper="$(printf '%q' "$gcm_path")"
+
+  say "Configuring WSL git to use Windows Git Credential Manager..."
+  say "  helper = $gcm_helper"
+
+  git config --global --replace-all credential.helper "$gcm_helper"
+
+  # Helps if you use multiple hosts/orgs (stores per-URL path).
+  git config --global credential.useHttpPath true
+
+  # Keep interactive prompts enabled (browser/device flow, MFA, etc.)
   git config --global credential.interactive always
 
-  if [[ "$GCM_STORE" == "cache" ]]; then
-    git config --global credential.credentialStore cache
-    git config --global credential.cacheOptions "--timeout=28800"
-  else
-    git config --global credential.credentialStore secretservice
+  # Back-compat note: Linux-only settings are ignored by Windows GCM
+  if [[ "${GCM_STORE:-}" != "cache" ]]; then
+    warn "GCM_STORE is set to '${GCM_STORE}', but this script now uses Windows GCM; GCM_STORE is ignored."
   fi
 }
 
 maybe_setup_gcm() {
   local origin is_https=false
   origin="$(git remote get-url origin 2>/dev/null || true)"
-  [[ "$origin" == https://github.com/* ]] && is_https=true
+  [[ "$origin" == https://* ]] && is_https=true
 
   [[ "$USE_GCM" == "no" ]] && { say "Skipping GCM setup."; return; }
   [[ "$USE_GCM" == "auto" && $is_https == false ]] && return
@@ -175,15 +240,15 @@ maybe_setup_gcm() {
     return
   fi
 
-  if ! have git-credential-manager && ! have git-credential-manager-core; then
-    install_gcm_linux
-    hash -r || true
-  fi
-
-  if have git-credential-manager || have git-credential-manager-core; then
-    configure_gcm_linux
+  local gcm_path=""
+  if gcm_path="$(find_windows_gcm)"; then
+    configure_gcm_windows "$gcm_path"
   else
-    warn "GCM install failed; HTTPS auth may prompt repeatedly."
+    warn "Could not find Windows Git Credential Manager."
+    warn "Install/upgrade Git for Windows (includes GCM), then re-run --gcm."
+    warn "Expected paths like:"
+    warn "  /mnt/c/Program Files/Git/mingw64/bin/git-credential-manager.exe"
+    warn "Note: this script no longer installs Linux GCM."
   fi
 }
 
@@ -259,7 +324,7 @@ if $DO_EXTRAS; then
 fi
 
 if $DO_GCM; then
-  say "== Phase: git auth (Linux GCM) =="
+  say "== Phase: git auth (Windows GCM via WSL) =="
   maybe_setup_gcm
 fi
 
