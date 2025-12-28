@@ -172,6 +172,10 @@ alias hg='history | grep'
 
 alias rmrf='rm -rf'
 
+codex() {
+  command codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.1-codex-mini "$@"
+}
+
 ######################################
 # Plugins
 ######################################
