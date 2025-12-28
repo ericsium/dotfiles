@@ -160,6 +160,9 @@ alias grep='grep --color'
 
 # git related aliases
 alias gag='git exec ag'
+alias gitd='git difftool'
+alias gitds='git difftool --staged'
+alias gits='git status'
 
 # find related aliases
 alias findf='find . -type f | fgrep'
