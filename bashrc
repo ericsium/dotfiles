@@ -160,6 +160,9 @@ alias grep='grep --color'
 
 # git related aliases
 alias gag='git exec ag'
+alias gitd='git difftool'
+alias gitds='git difftool --staged'
+alias gits='git status'
 
 # find related aliases
 alias findf='find . -type f | fgrep'
@@ -168,6 +171,10 @@ alias findfx='find . -type f | xargs fgrep'
 alias hg='history | grep'
 
 alias rmrf='rm -rf'
+
+codex() {
+  command codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.1-codex-mini "$@"
+}
 
 ######################################
 # Plugins
@@ -204,3 +211,6 @@ fi
 export PATH="/home/ewwhite/.pyenv/bin:$PATH"
 eval "$(pyenv init -)"
 eval "$(pyenv virtualenv-init -)"
+
+. "$HOME/.local/bin/env"
+export PATH="$HOME/.npm-global/bin:$PATH"

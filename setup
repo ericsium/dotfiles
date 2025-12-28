@@ -2,13 +2,15 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# Dotfiles bootstrap (Windows 11 + WSLg)
+# Phased setup for WSL Debian/Ubuntu:
+#   --dotfiles : uv + Python + protect ~/.bashrc + run ./install
+#   --extras   : WSLg GUI deps + Emacs GUI
+#   --gcm      : Git Credential Manager via Windows host (shared creds, persistent)
+#   --meld     : Meld + configure git difftool/mergetool
+#   --codex    : Codex CLI (npm i -g @openai/codex)
+#   --all      : everything
 #
-# - Installs GUI deps for WSLg (X11, libICE, dbus)
-# - Installs Emacs GUI
-# - Installs uv + Python 3.9 for dotbot
-# - Installs Git Credential Manager (Linux) for HTTPS auth
-# - Runs ./install under uv-managed Python
+# If no args are provided, defaults to --dotfiles only.
 # -----------------------------------------------------------------------------
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,26 +19,106 @@ cd "$ROOT_DIR"
 say()  { printf "\n\033[1m%s\033[0m\n" "$*"; }
 warn() { printf "\n\033[33mWARN:\033[0m %s\n" "$*" >&2; }
 die()  { printf "\n\033[31mERROR:\033[0m %s\n" "$*" >&2; exit 1; }
-
 have() { command -v "$1" >/dev/null 2>&1; }
 
 DOTFILES_PYTHON_VERSION="${DOTFILES_PYTHON_VERSION:-3.9.19}"
-USE_GCM="${USE_GCM:-auto}"   # auto | yes | no
+USE_GCM="${USE_GCM:-auto}"          # auto | yes | no
+GCM_STORE="${GCM_STORE:-cache}"     # (deprecated; Windows GCM ignores this, kept for backwards compat)
+
+DO_DOTFILES=false
+DO_EXTRAS=false
+DO_GCM=false
+DO_MELD=false
+DO_CODEX=false
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./setup [--dotfiles] [--extras] [--gcm] [--meld] [--codex] [--all]
+
+Defaults:
+  No arguments = --dotfiles only
+
+Env:
+  DOTFILES_PYTHON_VERSION=3.9.19
+  USE_GCM=auto|yes|no
+  GCM_STORE=cache|secretservice   (deprecated; only used by old Linux-GCM flow)
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+  DO_DOTFILES=true
+else
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dotfiles) DO_DOTFILES=true ;;
+      --extras)   DO_EXTRAS=true ;;
+      --gcm)      DO_GCM=true ;;
+      --meld)     DO_MELD=true ;;
+      --codex)    DO_CODEX=true ;;
+      --all)
+        DO_DOTFILES=true
+        DO_EXTRAS=true
+        DO_GCM=true
+        DO_MELD=true
+        DO_CODEX=true
+        ;;
+      -h|--help) usage; exit 0 ;;
+      *) die "Unknown argument: $1 (use --help)" ;;
+    esac
+    shift
+  done
+fi
 
 # ---- 0) Sanity ---------------------------------------------------------------
 [[ -f "$ROOT_DIR/install" ]] || die "Expected $ROOT_DIR/install to exist."
 
-# ---- 1) Git submodules --------------------------------------------------------
+# ---- 1) Git submodules -------------------------------------------------------
 if have git && [[ -f "$ROOT_DIR/.gitmodules" ]]; then
   say "Initializing/updating git submodules..."
   git submodule update --init --recursive
 fi
 
-# ---- 2) WSLg GUI dependencies -------------------------------------------------
-if [[ -d /mnt/wslg ]]; then
-  if have sudo; then
-    if ! dpkg -s libice6 >/dev/null 2>&1; then
-      say "Installing WSLg GUI dependencies (X11, libICE, dbus)..."
+# ---- 2) uv -------------------------------------------------------------------
+install_uv() {
+  if ! have uv; then
+    say "Installing uv (user-local)..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+  have uv || die "uv not found after install. Ensure ~/.local/bin is on PATH."
+  say "uv version: $(uv --version)"
+}
+
+# ---- 3) Python for dotfiles --------------------------------------------------
+ensure_dotfiles_python() {
+  say "Ensuring Python ${DOTFILES_PYTHON_VERSION} via uv..."
+  uv python install "${DOTFILES_PYTHON_VERSION}" >/dev/null
+}
+
+# ---- 4) Protect existing ~/.bashrc -------------------------------------------
+protect_bashrc() {
+  if [[ -e "$HOME/.bashrc" && ! -L "$HOME/.bashrc" ]]; then
+    if [[ -e "$HOME/.bashrc.old" ]]; then
+      warn "~/.bashrc exists and is not a symlink, but ~/.bashrc.old already exists; leaving ~/.bashrc untouched."
+    else
+      say "Moving existing ~/.bashrc to ~/.bashrc.old"
+      mv "$HOME/.bashrc" "$HOME/.bashrc.old"
+    fi
+  fi
+}
+
+# ---- 5) Run dotfiles install -------------------------------------------------
+run_dotfiles_install() {
+  say "Running ./install under Python ${DOTFILES_PYTHON_VERSION} via uv..."
+  uv run --python "${DOTFILES_PYTHON_VERSION}" bash "$ROOT_DIR/install"
+}
+
+# ---- 6) Extras: WSLg GUI deps + Emacs GUI ------------------------------------
+install_wslg_gui_deps() {
+  if [[ -d /mnt/wslg ]]; then
+    if have sudo; then
+      say "Installing WSLg GUI dependencies..."
       sudo apt update
       sudo apt install -y \
         libice6 libsm6 libx11-6 libxext6 libxrender1 \
@@ -44,76 +126,217 @@ if [[ -d /mnt/wslg ]]; then
         libglib2.0-0 libc6 libgcc-s1 libstdc++6 \
         dbus-x11 x11-apps
     else
-      say "GUI dependencies already present."
+      warn "WSLg detected but sudo not available; skipping GUI deps."
     fi
   else
-    warn "WSLg detected but sudo not available; skipping GUI dependency install."
+    warn "WSLg not detected; skipping GUI deps."
   fi
-else
-  warn "WSLg not detected; skipping GUI dependency install."
-fi
-
-# ---- 3) Emacs GUI -------------------------------------------------------------
-if have sudo; then
-  if ! dpkg -s emacs >/dev/null 2>&1 && ! dpkg -s emacs-gtk >/dev/null 2>&1; then
-    say "Installing Emacs (GUI build)..."
-    sudo apt install -y emacs
-  else
-    say "Emacs already installed."
-  fi
-else
-  warn "sudo not available; skipping Emacs install."
-fi
-
-# ---- 4) uv --------------------------------------------------------------------
-if ! have uv; then
-  say "Installing uv (user-local)..."
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
-fi
-have uv || die "uv not found after install. Ensure ~/.local/bin is on PATH."
-say "uv version: $(uv --version)"
-
-# ---- 5) Python for dotfiles ---------------------------------------------------
-say "Ensuring Python ${DOTFILES_PYTHON_VERSION} via uv..."
-uv python install "${DOTFILES_PYTHON_VERSION}" >/dev/null
-
-# ---- 6) Git Credential Manager (Linux) ----------------------------------------
-ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
-is_https=false
-[[ "$ORIGIN_URL" == https://github.com/* ]] && is_https=true
-
-install_gcm() {
-  say "Installing Git Credential Manager (Linux)..."
-  curl -LsSf https://aka.ms/gcm/linux-install-source.sh | bash
 }
 
-configure_gcm() {
-  say "Configuring Git Credential Manager (cache store)..."
-  git config --global credential.helper manager
-  git config --global credential.credentialStore cache
+install_emacs_gui() {
+  if have sudo; then
+    say "Installing Emacs (GUI)..."
+    sudo apt update
+    sudo apt install -y emacs-gtk || sudo apt install -y emacs
+  else
+    warn "sudo not available; skipping Emacs install."
+  fi
+}
+
+# ---- 7) Git Credential Manager via Windows host ------------------------------
+# This configures WSL git to call the Windows GCM executable from Git for Windows,
+# so auth persists in Windows Credential Manager and is shared across WSL distros.
+
+find_windows_gcm() {
+  # Print the best candidate path on stdout; return non-zero if not found.
+
+  # Common Git for Windows locations (varies by version)
+  local candidates=(
+    "/mnt/c/Program Files/Git/mingw64/bin/git-credential-manager.exe"
+    "/mnt/c/Program Files/Git/mingw64/bin/git-credential-manager-core.exe"
+    "/mnt/c/Program Files/Git/mingw64/libexec/git-core/git-credential-manager.exe"
+    "/mnt/c/Program Files/Git/mingw64/libexec/git-core/git-credential-manager-core.exe"
+
+    "/mnt/c/Program Files (x86)/Git/mingw64/bin/git-credential-manager.exe"
+    "/mnt/c/Program Files (x86)/Git/mingw64/bin/git-credential-manager-core.exe"
+    "/mnt/c/Program Files (x86)/Git/mingw64/libexec/git-core/git-credential-manager.exe"
+    "/mnt/c/Program Files (x86)/Git/mingw64/libexec/git-core/git-credential-manager-core.exe"
+
+    # Standalone installs sometimes use these names
+    "/mnt/c/Program Files/Git/mingw64/bin/gcm-core.exe"
+    "/mnt/c/Program Files (x86)/Git/mingw64/bin/gcm-core.exe"
+  )
+
+  local p
+  for p in "${candidates[@]}"; do
+    if [[ -x "$p" ]]; then
+      printf "%s\n" "$p"
+      return 0
+    fi
+  done
+
+  # Fallback: ask Windows where it is (works if Git for Windows is on PATH)
+  if have cmd.exe && have wslpath; then
+    local winpath=""
+    winpath="$(cmd.exe /c "where git-credential-manager.exe 2>nul" | tr -d '\r' | head -n 1 || true)"
+    if [[ -n "$winpath" ]]; then
+      local wslp
+      wslp="$(wslpath "$winpath" 2>/dev/null || true)"
+      if [[ -n "$wslp" && -x "$wslp" ]]; then
+        printf "%s\n" "$wslp"
+        return 0
+      fi
+    fi
+
+    winpath="$(cmd.exe /c "where git-credential-manager-core.exe 2>nul" | tr -d '\r' | head -n 1 || true)"
+    if [[ -n "$winpath" ]]; then
+      local wslp2
+      wslp2="$(wslpath "$winpath" 2>/dev/null || true)"
+      if [[ -n "$wslp2" && -x "$wslp2" ]]; then
+        printf "%s\n" "$wslp2"
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
+configure_gcm_windows() {
+  local gcm_path="$1"
+
+  # IMPORTANT: credential.helper is executed as a command line; spaces must be escaped.
+  # printf %q produces a shell-escaped string like /mnt/c/Program\ Files/...
+  local gcm_helper
+  gcm_helper="$(printf '%q' "$gcm_path")"
+
+  say "Configuring WSL git to use Windows Git Credential Manager..."
+  say "  helper = $gcm_helper"
+
+  git config --global --replace-all credential.helper "$gcm_helper"
+
+  # Helps if you use multiple hosts/orgs (stores per-URL path).
+  git config --global credential.useHttpPath true
+
+  # Keep interactive prompts enabled (browser/device flow, MFA, etc.)
   git config --global credential.interactive always
-  git config --global credential.cacheOptions "--timeout=28800"
+
+  # Back-compat note: Linux-only settings are ignored by Windows GCM
+  if [[ "${GCM_STORE:-}" != "cache" ]]; then
+    warn "GCM_STORE is set to '${GCM_STORE}', but this script now uses Windows GCM; GCM_STORE is ignored."
+  fi
 }
 
-if [[ "$USE_GCM" == "yes" ]] || { [[ "$USE_GCM" == "auto" ]] && $is_https; }; then
-  if ! have git-credential-manager; then
-    install_gcm
-    hash -r || true
+maybe_setup_gcm() {
+  local origin is_https=false
+  origin="$(git remote get-url origin 2>/dev/null || true)"
+  [[ "$origin" == https://* ]] && is_https=true
+
+  [[ "$USE_GCM" == "no" ]] && { say "Skipping GCM setup."; return; }
+  [[ "$USE_GCM" == "auto" && $is_https == false ]] && return
+
+  if ! have git; then
+    warn "git not found; skipping GCM."
+    return
   fi
 
-  if have git-credential-manager; then
-    configure_gcm
+  local gcm_path=""
+  if gcm_path="$(find_windows_gcm)"; then
+    configure_gcm_windows "$gcm_path"
   else
-    warn "GCM not found after install; HTTPS auth may prompt every time."
+    warn "Could not find Windows Git Credential Manager."
+    warn "Install/upgrade Git for Windows (includes GCM), then re-run --gcm."
+    warn "Expected paths like:"
+    warn "  /mnt/c/Program Files/Git/mingw64/bin/git-credential-manager.exe"
+    warn "Note: this script no longer installs Linux GCM."
   fi
-else
-  say "Skipping GCM setup."
+}
+
+# ---- 8) Meld -----------------------------------------------------------------
+install_meld() {
+  if have sudo; then
+    say "Installing meld..."
+    sudo apt update
+    sudo apt install -y meld
+  else
+    warn "sudo not available; skipping meld install."
+  fi
+}
+
+configure_git_meld() {
+  if have git && have meld; then
+    say "Configuring git to use meld..."
+    git config --global diff.tool meld
+    git config --global difftool.meld.path "$(command -v meld)"
+    git config --global difftool.prompt false
+    git config --global merge.tool meld
+    git config --global mergetool.meld.path "$(command -v meld)"
+    git config --global mergetool.prompt false
+  else
+    warn "git or meld missing; skipping git meld config."
+  fi
+}
+
+# ---- 9) Codex CLI ------------------------------------------------------------
+install_codex() {
+  if ! have npm; then
+    if have sudo; then
+      say "Installing nodejs + npm (for Codex)..."
+      sudo apt update
+      sudo apt install -y nodejs npm
+    else
+      die "npm not available and sudo missing; cannot install Codex."
+    fi
+  fi
+
+  # Configure npm global prefix (user-local, no sudo)
+  if [[ ! -d "$HOME/.npm-global" ]]; then
+    say "Configuring npm user-global directory..."
+    mkdir -p "$HOME/.npm-global"
+    npm config set prefix "$HOME/.npm-global"
+  fi
+
+  # Ensure PATH is set for this session and future shells
+  export PATH="$HOME/.npm-global/bin:$PATH"
+  if ! grep -q '.npm-global/bin' "$HOME/.bashrc" 2>/dev/null; then
+    echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$HOME/.bashrc"
+  fi
+
+  say "Installing Codex CLI..."
+  npm i -g @openai/codex
+
+  have codex && say "Codex installed successfully." || warn "Codex not found on PATH."
+}
+
+# ---- Execute phases -----------------------------------------------------------
+if $DO_DOTFILES; then
+  say "== Phase: dotfiles =="
+  install_uv
+  ensure_dotfiles_python
+  protect_bashrc
+  run_dotfiles_install
 fi
 
-# ---- 7) Run dotfiles install --------------------------------------------------
-say "Running ./install under Python ${DOTFILES_PYTHON_VERSION} via uv..."
-uv run --python "${DOTFILES_PYTHON_VERSION}" bash "$ROOT_DIR/install"
+if $DO_EXTRAS; then
+  say "== Phase: extras =="
+  install_wslg_gui_deps
+  install_emacs_gui
+fi
+
+if $DO_GCM; then
+  say "== Phase: git auth (Windows GCM via WSL) =="
+  maybe_setup_gcm
+fi
+
+if $DO_MELD; then
+  say "== Phase: meld =="
+  install_meld
+  configure_git_meld
+fi
+
+if $DO_CODEX; then
+  say "== Phase: codex =="
+  install_codex
+fi
 
 say "Setup complete."
-
