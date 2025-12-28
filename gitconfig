@@ -81,13 +81,14 @@
 
 [merge]
 	defaultToUpstream = true
-	tool = vimdiff
+	tool = meld
 
 [pull]
 	ff = only
 
 [mergetool]
 	keepBackup = false
+	prompt = false
 
 [push]
 	default = upstream
@@ -120,3 +121,7 @@
 	cacheOptions = --timeout=28800
 [difftool]
 	prompt = false
+[difftool "meld"]
+	path = /usr/bin/meld
+[mergetool "meld"]
+	path = /usr/bin/meld

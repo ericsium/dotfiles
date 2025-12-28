@@ -204,3 +204,6 @@ fi
 export PATH="/home/ewwhite/.pyenv/bin:$PATH"
 eval "$(pyenv init -)"
 eval "$(pyenv virtualenv-init -)"
+
+. "$HOME/.local/bin/env"
+export PATH="$HOME/.npm-global/bin:$PATH"
